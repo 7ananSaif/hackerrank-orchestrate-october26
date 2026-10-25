@@ -12,6 +12,144 @@ Read [`problem_statement.md`](./problem_statement.md) for the complete challenge
 
 ---
 
+## Solution
+
+`code/main.py` is a deterministic deletion-audit agent. It reads `dataset/`, treats
+every reported workflow status as a claim, reconstructs the real state of each
+resource at `audit_at` from the supplied evidence, and writes `output.csv`.
+
+### Setup
+
+Python 3.10+ on Windows, macOS or Linux. One optional dependency:
+
+```powershell
+python -m pip install pdfplumber        # only for the PDF evidence files
+```
+
+`pdfplumber` is used when present; without it the PDF reader returns nothing and the
+pipeline still runs (the PDFs are the smallest part of the evidence set). Model
+access is optional and off by default (see "Model layer" below).
+
+### Run
+
+```powershell
+python code/main.py                     # writes ./output.csv for all 518 cases
+python code/main.py --samples --out code/evaluation/sample_predictions.csv
+python code/evaluation/main.py          # scores the sample predictions
+python code/evaluation/validate.py output.csv   # contract checks
+python code/evaluation/custom_cases.py          # 4 custom decision cases
+```
+
+`python code/main.py` needs no arguments, no key and no network.
+
+### Architecture
+
+```
+code/
+  main.py                entry point: one row per case, sorted by case_id
+  audit/
+    loaders.py           CSV loading, timestamp parsing, Dataset/Case records
+    identity.py          current + historical identifiers for each request
+    catalog.py           in-memory index of every evidence observation
+    evidence/            one parser per evidence family
+      sql_snapshots.py   SQLite execution of each .sql capture (primary and replicas)
+      json_records.py    snapshot bundles, service exports, connector/export probes
+      logs.py            key=value probes and pipe-delimited handover sheets
+      documents.py       PDF text-layer extraction (retention registers, attachments)
+      images.py          image evidence manifest and captions
+    state.py             per-resource state at audit_at, attribute to subject
+    rules.py             applies deletion_rules.csv to each resolved state
+    steps.py             finding/remediation/verification emission and ordering
+    classify.py          is this request a deletion request?
+    llm.py               optional cached model client with token accounting
+  evaluation/
+    main.py              accuracy scoring against sample_output.csv
+    validate.py          submission contract validator
+    custom_cases.py      four hand-built decision cases
+    evaluation_report.md results, custom cases, failures, improvements
+    usage_report.md      provider/model/token/cost accounting for the final run
+```
+
+The separation matters more than the file count: **evidence parsing** knows nothing
+about policy, **rules** know nothing about evidence formats, and **steps** know
+nothing about either. Adding a new evidence family means adding one parser; adding
+a data category means adding one row to `deletion_rules.csv`.
+
+### How a case is decided
+
+1. **Classify the request.** `classify.py` looks for deletion stems in ~15
+   languages (`delet`, `eras`, `remov`, `supprim`, `elimin`, `exclus`, `削除`, …)
+   and for maintenance/access wording that explicitly asks to keep the account
+   ("leave the account active", "continue using the service", "portable format").
+   Only the second family produces `NOT_APPLICABLE`, with `steps_json = []`.
+2. **Resolve identity.** `user_identities.csv` gives the current email, phone,
+   `email_hash` and `user_id`; `user_audit_log.csv` gives every historical value, so
+   a record keyed on the address the person *used to have* is still attributed to
+   them.
+3. **Parse every evidence file** into `Observation` records: system, resource,
+   collection, capture time, identifiers found, PII fields exposed, attributes
+   (`enabled`, `restore_allowed`, `archive_present`, `account_status`, …). SQL
+   captures are executed with `sqlite3`, so primary, regional, reporting and
+   failover replicas are all read and drift is visible.
+4. **Attribute by identifier, not by time.** A resource joins the case only if an
+   observation carries one of the subject's identifiers, plus the single account
+   record the workflow targeted. This is what keeps neighbouring customers' records
+   (and the decoys placed in the same capture) out of the answer.
+5. **Apply policy.** `deletion_rules.csv` maps each data category to `DELETE`,
+   `REDACT`, `ANONYMIZE`, `RETAIN`, `BLOCK_RESTORE` or `DISABLE_FLOW`. A tombstone
+   may keep `user_id` but must lose name, email, phone and hash. Records the policy
+   retains (security audit, legal hold) are verified **present**, not deleted.
+6. **Emit steps** in the required order: `FINDING` (with an evidence id) →
+   `REMEDIATION` (empty evidence id) → `VERIFICATION` (empty for future checks,
+   evidence-bearing for `COMPLETE` proofs). Within a phase, operation order, then
+   `system_id`, then `resource_id`.
+
+`COMPLETE` is only emitted when no finding survives, which means every
+delete-required record was proven absent and every retained record proven present.
+
+### Model layer
+
+The model is optional and used only where code is weakest: classifying
+`request_text`, and reading evidence with no text layer. Nothing else calls it.
+
+```powershell
+$env:AUDIT_LLM_PROVIDER = "none"          # force the offline, fully deterministic path
+$env:ANTHROPIC_API_KEY  = "<key>"         # or OPENAI_API_KEY with provider "openai"
+$env:AUDIT_MODEL        = "claude-sonnet-4-5"   # optional; provider default otherwise
+```
+
+A `.env` file in the repo root is read as a convenience and never overrides a
+variable already set in the real environment. Calls are cached on disk in
+`code/cache/llm_cache.json` (keyed by `sha256(kind | model | prompt)`), so re-runs cost
+nothing, and each successful call appends one line to
+`code/evaluation/usage_log.jsonl` with provider, model and token counts. After three
+consecutive provider failures the client disables model calls for the run, warns once
+and falls back — which is exactly what happened for the submitted `output.csv`: the
+configured key was rejected, so every case was decided deterministically at zero cost.
+See `code/evaluation/usage_report.md` for the full accounting.
+
+### Reproducing output.csv
+
+```powershell
+python code/main.py --out output.csv
+python code/evaluation/validate.py output.csv
+```
+
+The run is deterministic: the same dataset produces a byte-identical `output.csv`.
+The validator checks the header, the 518 sorted rows, JSON validity, consecutive
+`step_no`, allowed phase/operation/state triples, ordering, the evidence-id rules per
+status, and that every cited id exists in `evidence_files.csv`,
+`system_activity.csv` or `user_audit_log.csv`.
+
+Measured on the 32 public samples: case-level status accuracy **0.875** (28/32), row
+and sequence accuracy **0.250**, step-level accuracy **0.767**, field accuracy
+**0.764**; all four custom cases pass. On the full set the submission is 296
+INCOMPLETE, 212 COMPLETE and 10 NOT_APPLICABLE over 2282 steps, and the validator
+accepts every constraint. Details, the four remaining known failures and what I would
+fix next are in `code/evaluation/evaluation_report.md`.
+
+---
+
 ## Quick Start
 
 Clone the repository and move into the project directory:

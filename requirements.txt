@@ -1,0 +1,9 @@
+# Python 3.12. The pipeline itself uses only the standard library plus pdfplumber.
+
+# Required for PDF evidence. If it is missing, PDF text is silently skipped.
+pdfplumber>=0.11.9
+
+# Optional model layer (code/audit/llm.py). Install the one you use;
+# the agent runs fully offline without them.
+anthropic>=2.3.0
+openai>=3.37.0

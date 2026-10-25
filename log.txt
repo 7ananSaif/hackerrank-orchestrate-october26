@@ -1,0 +1,130 @@
+## [2026-10-24T15:48:00+03:00] SESSION START
+
+tool=Sixth
+model=Claude Fable 5 1
+Repo Root: D:/python/hackerrank-orchestrate-october26
+Branch: main
+Worktree: main
+Parent Agent: none
+Language: py
+Time Remaining: not configured
+
+## [2026-10-24T15:49:00+03:00] Kickoff: read AGENTS.md/README/problem_statement, start Stage 1
+
+User Prompt (verbatim, secrets redacted):
+You are my engineering partner for HackerRank Orchestrate (Oct 2026), solo, 24 hours. Task: "Ghost Data Still Exists", a deletion-audit agent. Environment: Windows, PowerShell, Python 3. Repo root is the current directory.
+
+FIRST: read ./AGENTS.md, README.md and problem_statement.md fully, and follow AGENTS.md logging (every turn appended to log.txt). Never put API keys, tokens, or real personal data in code, prompts, config, or log.txt. Read keys from environment variables only.
+
+GOAL
+Read dataset/*.csv and dataset/evidence/*, and write root-level output.csv: header exactly `case_id,deletion_status,steps_json`, exactly 518 data rows (one per case in dataset/deletion_requests.csv), sorted by case_id.
+
+OUTPUT CONTRACT
+- deletion_status is COMPLETE, INCOMPLETE, or NOT_APPLICABLE.
+- steps_json is a JSON array; each step has: step_no (consecutive from 1), phase, system_id, resource_id, operation, state, evidence_id.
+- NOT_APPLICABLE (person did not request deletion): steps_json = [].
+- COMPLETE: only VERIFICATION steps proving current state, each citing a valid file_id / activity_id / audit_id.
+- INCOMPLETE: FINDING steps (cite evidence ids), the full REMEDIATION plan, and the VERIFICATION checks that must pass afterward. Remediation and future verification steps use evidence_id "".
+- Allowed phase/operation/state combos exactly as in the problem statement table (REPORT_REMAINING_RECORD/PRESENT, REPORT_EXPOSED_PII/PRESENT, REPORT_ACTIVE_DATA_FLOW/ACTIVE, REPORT_RESTORE_RISK/ACTIVE, DISABLE_DATA_FLOW/DISABLED, BLOCK_RESTORE/BLOCKED, DELETE_RECORD/ABSENT, REDACT_RECORD/REDACTED, ANONYMIZE_RECORD/ANONYMIZED, VERIFY_RECORD_ABSENT, VERIFY_RECORD_PRESENT, VERIFY_RECORD_REDACTED, VERIFY_RECORD_ANONYMIZED, VERIFY_DATA_FLOW_DISABLED, VERIFY_RESTORE_BLOCKED).
+- Ordering: phase order FINDING, REMEDIATION, VERIFICATION. Within a phase, operation order as in the table, then system_id ascending, then resource_id ascending. Array order matters to the grader.
+
+DOMAIN RULES
+- reported_status is a claim, not proof. Determine real state at audit_at.
+- Resolve current AND historical identifiers (user_identities.csv + user_audit_log.csv; emails may have changed before audit_at).
+- Apply deletion_rules.csv to every relevant record. Tombstones may keep user_id but must lose name, email, phone, email hash. Records the policy requires to be retained must be kept (verify present).
+- Find active sync/import/export flows and backups/restores that can recreate deleted data.
+- SQL snapshots may include primary, regional replicas, reporting replica and failover replica. Load them with sqlite3 and look for replication drift.
+
+STAGE 1: EXPLORE AND PLAN (no solution code yet)
+1. Profile every dataset file: columns, row counts, join keys, odd values.
+2. Inventory dataset/evidence by type (PDF, image, log, JSON, SQL) with examples. List tables in each SQL snapshot.
+3. Explain 4 sample cases from sample_output.csv: how each expected row follows from the evidence.
+4. Identify request_text patterns, including non-deletion requests.
+5. Write code/PLAN.md: architecture (what is deterministic code vs LLM and why), parsing per evidence type, identity resolution, state reconstruction, rules/tombstone/retention logic, step generation and ordering, eval strategy, token/cost tracking, risks.
+Show me a short summary. Continue to Stage 2 unless you hit a blocking ambiguity.
+
+STAGE 2: BUILD (deterministic core first)
+- code/main.py as entry point (python code/main.py reads dataset/, writes ./output.csv). Split into modules: loaders, identity, state, rules, steps, llm, validate.
+- Implement identity resolution, per-resource state at audit_at, rules engine, active-flow and restore-risk detection, and the step emitter with the exact ordering above.
+- Use an LLM only where code cannot do the job: classifying request_text as a deletion request or not, and extracting facts from PDFs/images. Cache every LLM call on disk, batch where possible, keep prompts in source or Markdown files, and log provider, model, calls, input/output tokens, cost to a usage log. If no API key is set, fall back to deterministic heuristics.
+
+STAGE 3: VALIDATE AND ITERATE
+- code/evaluation/validate.py: checks header, 518 rows, sorted case_ids, valid JSON, consecutive step_no, allowed phase/operation/state combos, phase and operation ordering, evidence id rules per status, evidence ids exist in file_id/activity_id/audit_id sources.
+- code/evaluation/main.py: scores against dataset/sample_output.csv and reports case-level status accuracy, row accuracy, step-level and field-level accuracy, and sequence accuracy.
+- Run on the 32 samples, diff every mismatch, fix root causes (not special cases), and repeat until it is as close to 100% as possible.
+- Write at least 3 extra custom evaluation cases (for example a renamed email, a tombstone, and a restore risk) and test them.
+- Look for generalization risks, because the hidden answers cover all 518.
+
+STAGE 4: FULL RUN, FROZEN CODE
+- Freeze code, then run on all 518 once, producing output.csv and the usage log. Run the validator on output.csv.
+
+STAGE 5: REPORTS AND PACKAGING
+- code/evaluation/evaluation_report.md: case, row, field and sequence accuracy; the 3+ custom cases; failures found; improvements made. Put real numbers in the Markdown (the code judge ignores csv/json/sql/log files).
+- code/evaluation/usage_report.md: describes the final full-dataset run only: providers and model names, calls, input/output tokens, total and average tokens per request, estimated total and per-request cost, per-model and overall totals.
+- README.md: setup, dependencies, run command, architecture overview, how to reproduce output.csv.
+- Package code.zip from repo root WITHOUT dataset/, .venv, __pycache__, node_modules, or nested archives: Compress-Archive -Path README.md, code -DestinationPath code.zip -Force (remove code\__pycache__ folders first; keep .venv at repo root).
+
+FINAL CHECKLIST (verify and report each item)
+[ ] output.csv header exact, 518 rows, sorted by case_id
+[ ] every steps_json is a valid JSON array, step_no consecutive from 1
+[ ] findings and COMPLETE verifications cite valid evidence ids
+[ ] remediation and future verification steps have evidence_id ""
+[ ] code.zip has code, README.md, code/evaluation/evaluation_report.md, code/evaluation/usage_report.md, and no dataset/ or nested archives
+[ ] log.txt follows the AGENTS.md format
+[ ] no API keys, credentials, or real personal data anywhere
+
+Throughout: keep explanations brief and clear so I can defend every design decision in the 30-minute AI judge interview (architecture, trade-offs, failure cases, what I would improve).
+
+Agent Response Summary:
+Welcome to HackerRank Orchestrate. Build and ship Ghost Data Still Exists, an AI-powered deletion-audit agent. Let's get started. Read AGENTS.md, README.md and problem_statement.md in full. Established the log file at the repo root, confirmed branch main and Python 3.12.10 on PowerShell, and set up a staged plan (explore/plan, deterministic build, validation, frozen full run, packaging). No API keys are used or logged; keys will be read from environment variables only.
+
+Actions:
+* read AGENTS.md
+* read README.md
+* read problem_statement.md
+* ran: git rev-parse --abbrev-ref HEAD; git rev-parse --show-toplevel; python --version
+* created log.txt
+
+Context:
+tool=Sixth
+model=Claude Fable 5 1
+branch=main
+repo_root=D:/python/hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+## [2026-10-25T08:25:00+03:00] SESSION START
+
+tool=Sixth
+model=Claude Fable 5 1
+Repo Root: D:\python\hackerrank-orchestrate-october26
+Branch: unknown
+Worktree: main
+Parent Agent: none
+Language: py
+Time Remaining: not configured
+
+## [2026-10-25T08:26:00+03:00] Build, evaluate and package the deletion-audit agent
+
+User Prompt (verbatim, secrets redacted):
+You are my engineering partner for HackerRank Orchestrate (Oct 2026), solo, 24 hours. Task: "Ghost Data Still Exists", a deletion-audit agent. Environment: Windows, PowerShell, Python 3. Repo root is the current directory. [full brief omitted here for brevity: Stage 1 explore/plan, Stage 2 build deterministic core, Stage 3 validate and iterate on 32 samples, Stage 4 full run of 518 cases, Stage 5 reports and packaging, final checklist]
+
+Agent Response Summary:
+Built a deterministic audit pipeline under code/audit/ with separate loaders, identity resolution, evidence parsers (SQL, JSON, logs, PDFs, images), state reconstruction, policy rules, step emitter and an optional cached LLM layer. Attribution is identifier-based rather than time-window-based, which keeps other customers' records and decoys out of each case. Iterated against the 32 public samples to reach 0.781 status accuracy, 0.250 row/sequence accuracy and 0.681 field accuracy, then froze the code, ran all 518 cases, and validated the output against every contract rule.
+
+Actions:
+* Read AGENTS.md, README.md, problem_statement.md; profiled every dataset file and the evidence tree
+* Created code/main.py plus code/audit/{loaders,identity,catalog,state,rules,steps,classify,llm}.py
+* Created code/audit/evidence/{sql_snapshots,json_records,logs,documents,images}.py
+* Created code/evaluation/{main,validate,custom_cases}.py and both Markdown reports
+* Ran python code/main.py --samples and the scorer repeatedly, fixing root causes found by diffing mismatches
+* Ran python code/main.py --out output.csv (518 rows, 2403 steps) and python code/evaluation/validate.py output.csv (all checks pass)
+* Ran python code/evaluation/custom_cases.py (4/4 pass)
+* Removed code/**/__pycache__ and built code.zip with Compress-Archive; verified 26 entries, no dataset/ or nested archives
+
+Context:
+tool=Sixth
+model=Claude Fable 5 1
+branch=unknown
+repo_root=D:\python\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
